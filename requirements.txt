@@ -1,0 +1,18 @@
+# ffmpeg comes bundled through imageio-ffmpeg (no system install needed).
+imageio-ffmpeg>=0.5.1
+
+# Every stage: segment I/O, probes, verification.
+numpy>=1.26,<3
+opencv-python>=4.9
+
+# Stage 2/3 — AI segmentation (mattes) and background replacement.
+rembg>=2.0.50
+onnxruntime>=1.17
+
+# Stage 1 — transcription (faster-whisper runs in its own venv in this project;
+# installed separately because it pins numpy<2 and huggingface_hub<1).
+# faster-whisper>=1.0.3
+
+# Optional — audio restoration (DeepFilterNet, CPU torch; heavy, own venv).
+# torch==2.0.1
+# deepfilternet==0.5.6

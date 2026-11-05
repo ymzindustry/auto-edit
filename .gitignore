@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments and models (built by scripts/setup.sh, never committed)
+venv_*/
+toolchain/
+models/
+
+# Media: sources, intermediates, renders
+*.mp4
+*.mov
+*.MP4
+*.mkv
+*.wav
+*.mp3
+*.m4a
+*.png
+*.jpg
+*.jpeg
+!docs/**/*.png
+
+# Per-project working folders
+video-projects/
+raw_data/
+clips/
+cache/
+workspace/
+backups/
+*.log
+*.part.mp4
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+nohup.out
