@@ -83,7 +83,11 @@ local_windows(clips, indices, desc)     # optional: spread the effect over segme
 merged_window(total, desc)              # optional: window on a fused range
 ```
 
-Four effects ship today: `add_media`, `push_video`, `side_by_side`, `zoom`.
+Five effects ship today: `add_media` (overlay a demo clip), `push_video` (one camera
+slides in and pushes the other), `side_by_side` (both cameras, nothing cropped), `zoom`
+(push-in), and `corner_reveal` — a window of the camera slides into a corner, shrinks,
+and comes back while a second media fills the frame (used for "here is the screen"
+moments, with an optional border and a blur that fades out so the shot returns cleanly).
 
 ## Design principles
 
