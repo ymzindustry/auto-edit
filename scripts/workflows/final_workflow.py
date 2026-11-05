@@ -15,6 +15,8 @@ OPTIONS
   --volume N            music level relative to the voice (0.18; 0.08 = very discreet)
   --fade N              music fade-in / fade-out, seconds (2)
   --crf N               quality if a re-encode is needed (18)
+  --only PREFIX         only glue this camera, by file-name prefix (main, screen, ...);
+                        repeatable, e.g. --only main --only screen. Default: every camera
 
 EXAMPLES
     python3 scripts/workflows/final_workflow.py shoulder ../music.mp3
@@ -259,6 +261,9 @@ def main() -> None:
                          "there, 0.30 clearly present")
     ap.add_argument("--fade", type=float, default=2.0,
                     help="Music fade-in/fade-out length in seconds (default 2)")
+    ap.add_argument("--only", action="append", default=None, metavar="PREFIX",
+                    help="only glue these camera(s), by file-name prefix (main, screen, "
+                         "...). Repeatable. Default: every camera found")
     ap.add_argument("--crf", type=int, default=18,
                     help="Quality if a re-encode is needed: 18 visually lossless (default), "
                          "23 smaller. Ignored when the segments are identical")
@@ -276,9 +281,19 @@ def main() -> None:
             cams.setdefault(stem, []).append(os.path.join(sd, f))
     if not cams:
         raise SystemExit(f"No segment folder with a video found in {src_dir}")
+    if args.only:
+        wanted = [o.lstrip("_") for o in args.only]
+        kept = {k: v for k, v in cams.items() if any(k.startswith(w) for w in wanted)}
+        missing = [w for w in wanted if not any(k.startswith(w) for k in cams)]
+        if missing:
+            raise SystemExit(f"--only {', '.join(missing)}: no camera matches "
+                             f"(found: {', '.join(sorted(cams))})")
+        cams = kept
+        print(f"only      : {', '.join(sorted(cams))}")
 
     os.makedirs(out_dir, exist_ok=True)
-    single = len(cams) == 1
+    single = len(cams) == 1                 # a --output needs exactly one camera
+    bare_name = single and not args.only    # "final.mp4" only when nothing was filtered
 
     print(f"project   : {project}")
     print(f"input     : {src_dir}")
@@ -293,7 +308,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(dir=PROFILE) as tmp:
         for cam, segs in cams.items():
             out = (args.output if (args.output and single)
-                   else os.path.join(out_dir, "final.mp4" if single
+                   else os.path.join(out_dir, "final.mp4" if bare_name
                                      else f"final_{cam}.mp4"))
             print(f"  gluing {cam}: {len(segs)} segment(s) -> {os.path.basename(out)}")
             merged = os.path.join(tmp, f"merged_{cam}.mp4")
