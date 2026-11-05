@@ -16,9 +16,17 @@ slides to `corner`, `g` % of the frame width away from the edges, while m1 (`src
 in behind and ends up filling the frame. At the end m1 is full screen and the small
 window is still visible in its corner.
 
-ONE plan entry covers a RANGE of segments and behaves as a single continuous move: the
-slide starts `start` seconds into the first segment and finishes `end` seconds before the
-last one ends (the same start/end contract every effect uses).
+TIMING (one plan entry covers a RANGE of segments, and the move is continuous across the
+joins — it never restarts at a cut):
+
+    |<-- start -->|<-------- hold -------->|<-- end -->|
+    0            start                    dur-end     dur
+    m0 centred  m0 in the corner           starts back home
+
+  `start` : the window IS in the corner at `start` seconds (the way out lasts `start`)
+  `end`   : the window leaves the corner `end` seconds before the end and is back at its
+            initial place on the last frame (the way back lasts `end`)
+  start=0 -> already in the corner from the first frame; end=0 -> it never comes back.
 """
 
 NAME = "corner_reveal"
@@ -43,8 +51,10 @@ def corner_reveal(src, w=35, l=35, x=0.5, y=0.5, corner="bottom_left", g=3,
     corner  : where the window ends up: bottom_left (default), bottom_right, top_left,
               top_right
     g       : gap between the window and the edges, in % of the frame width (3)
-    start   : the slide begins this many seconds into the first segment of the range
-    end     : the slide is FINISHED this many seconds before the last segment ends
+    start   : the window is settled IN THE CORNER at this many seconds (the way out lasts
+              `start`); 0 = it starts there
+    end     : the window leaves the corner this many seconds before the end and is back
+              at its initial place on the last frame; 0 = it never comes back
     fade    : length of m1's fade-in, in seconds (0 = it pops, no fade)
     blur    : blur applied to the camera behind m1 (0 = none, 20 = soft). It only shows
               while m1 is still transparent.
@@ -78,11 +88,11 @@ def corner_reveal(src, w=35, l=35, x=0.5, y=0.5, corner="bottom_left", g=3,
 
 def merged_window(total: float, desc: dict) -> dict:
     """The window on a FUSED range: one clip, one move, from `start` to `total - end`."""
-    if desc["start"] + desc["end"] >= total:
+    if desc["start"] + desc["end"] > total:
         raise SystemExit(f"corner_reveal: start {desc['start']}s + end {desc['end']}s "
-                         f"do not fit in the {total:.2f}s merged clip")
-    return {"offset": desc["start"], "span": total - desc["start"] - desc["end"],
-            "fade": desc["fade"]}
+                         f"is longer than the {total:.2f}s merged clip")
+    return {"offset": 0.0, "range": total, "start": desc["start"],
+            "end": desc["end"], "fade": desc["fade"]}
 
 
 def local_windows(clips: list, indices: list, desc: dict) -> dict:
@@ -93,23 +103,19 @@ def local_windows(clips: list, indices: list, desc: dict) -> dict:
     is continuous across the joins (no jump at a cut). Segments outside the window are
     left untouched (None), and the fade-in only happens on the first one.
     """
-    T0 = clips[indices[0]]["start"] + desc["start"]
-    T1 = clips[indices[-1]]["start"] + clips[indices[-1]]["dur"] - desc["end"]
-    if T1 <= T0:
-        raise SystemExit(f"corner_reveal: the move would end before it starts "
-                         f"({T0:.2f}s -> {T1:.2f}s)")
+    T0 = clips[indices[0]]["start"]
+    T1 = clips[indices[-1]]["start"] + clips[indices[-1]]["dur"]
+    if desc["start"] + desc["end"] > T1 - T0:
+        raise SystemExit(f"corner_reveal: start {desc['start']}s + end {desc['end']}s "
+                         f"is longer than the {T1 - T0:.2f}s range")
     out = {}
     for i in indices:
         c = clips[i]
-        s0, s1 = c["start"], c["start"] + c["dur"]
-        if T1 <= s0 or T0 >= s1:
-            out[i] = None                       # outside the window: left untouched
-            continue
-        # `offset` is the GLOBAL start of the move expressed on this segment's own
-        # timeline: negative for a segment that the move began before. Keeping it global
-        # is what makes the window continue across a cut instead of jumping back.
-        out[i] = {"offset": T0 - s0, "span": max(0.001, T1 - T0),
-                  "fade": desc["fade"] if T0 >= s0 else 0.0}
+        # `offset` puts the segment on the range's timeline: negative once the effect has
+        # already begun, which is what keeps the movement continuous across a cut.
+        out[i] = {"offset": T0 - c["start"], "range": T1 - T0,
+                  "start": desc["start"], "end": desc["end"],
+                  "fade": desc["fade"] if T0 >= c["start"] else 0.0}
     return out
 
 
@@ -186,10 +192,12 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
     if x1 < 0 or y1 < 0:
         raise SystemExit("corner_reveal: the gap is larger than the free space")
 
-    t0 = float(win["offset"])                  # may be negative: the move began earlier
-    span = max(0.001, float(win["span"]))
+    off = float(win["offset"])                 # may be negative: the move began earlier
+    rng = max(0.001, float(win["range"]))
+    st = max(0.0, float(win.get("start", desc["start"])))
+    en = max(0.0, float(win.get("end", desc["end"])))
     fade = float(win.get("fade", desc["fade"]))
-    media_at = max(0.0, t0)                    # m1 can only start inside this clip
+    media_at = max(0.0, off)                   # m1 can only start inside this clip
 
     # m1: scaled to COVER the frame (aspect kept, the overflow is cropped)
     media_natural = 0.0 if still else _duration(src)
@@ -225,8 +233,20 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
     m1 += f",setpts=PTS+{media_at:.3f}/TB[m1]"
 
     # the moving window: the kept region of m0, sliding from (x0,y0) to (x1,y1)
-    p = f"clip((t-{t0:.3f})/{span:.3f},0,1)"
-    ease = f"st(0,{p})*st(0,{p})*(3-2*st(0,{p}))"        # smoothstep: soft start and stop
+    # two ramps on the range's own clock (t + off, so a cut does not reset it):
+    #   out  : 0 -> 1 during the first `start` seconds  (it IS in the corner at `start`)
+    #   back : 0 -> 1 during the last `end` seconds     (it is home again at the end)
+    if st > 0:
+        out_p = f"clip((t+{off:.3f})/{st:.3f},0,1)"
+        out_e = f"({out_p})*({out_p})*(3-2*({out_p}))"
+    else:
+        out_e = "1"
+    if en > 0:
+        back_p = f"clip((t+{off:.3f}-{rng - en:.3f})/{en:.3f},0,1)"
+        back_e = f"({back_p})*({back_p})*(3-2*({back_p}))"
+    else:
+        back_e = "0"
+    ease = f"({out_e})*(1-{back_e})"
     wx = f"{x0:.2f}+({x1 - x0:.2f})*({ease})"
     wy = f"{y0:.2f}+({y1 - y0:.2f})*({ease})"
 
@@ -249,8 +269,8 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
         acodec = ["-c:a", "aac", "-b:a", "192k"]
 
     print(f"  {os.path.basename(mp4)} {W}x{H} @ {fps:g} fps  {dur:.2f}s — window "
-          f"{cw}x{ch} ({desc['w']:g}x{desc['l']:g}%) from ({x0:.0f},{y0:.0f}) "
-          f"to {c} ({x1:.0f},{y1:.0f}) over {span:.2f}s")
+          f"{cw}x{ch} ({desc['w']:g}x{desc['l']:g}%) -> {c} at {st:.2f}s, "
+          f"back home over the last {en:.2f}s")
 
     return [ff, "-y", "-i", mp4, *media_in,
             "-filter_complex", fc, "-map", "[out]",

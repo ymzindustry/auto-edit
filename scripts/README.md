@@ -296,11 +296,13 @@ aussitôt utilisable dans le plan, sans toucher au moteur.
 - **`corner_reveal`** — on **garde une fenêtre** de la caméra (`w` % de la largeur, `l` %
   de la hauteur, centrée sur `x`,`y`) et on la fait **glisser vers un coin**
   (`corner="bottom_left"`, `bottom_right`, `top_left`, `top_right`) à `g` % du bord,
-  pendant qu'un média (`src`) **apparaît en fond et prend toute la place** : à la fin le
-  média remplit l'image et la petite fenêtre reste visible dans son coin. `fade` (fondue
-  du média), `blur` (flou de la caméra derrière), `volume` (son du média), `fit`
-  (`cut`/`speed`), et `start`/`end` comme partout. Le mouvement est **continu sur toute
-  la plage**, il ne repart pas à chaque segment.
+  pendant qu'un média (`src`) **apparaît en fond et prend toute la place**. Chronologie :
+  la fenêtre **arrive dans le coin à `start` secondes** (le trajet dure `start`), elle y
+  reste, puis **`end` secondes avant la fin elle repart** et retrouve sa place initiale
+  sur la dernière image. `start=0` = déjà dans le coin, `end=0` = elle ne revient pas.
+  `fade` (fondue du média), `blur` (flou de la caméra derrière), `volume` (son du média),
+  `fit` (`cut`/`speed`). Le mouvement est **continu sur toute la plage**, il ne repart
+  pas à chaque segment.
 - **`zoom`** — **travelling avant** sur la caméra : `zoom` (1.0 = rien, 2.0 = l'image fait
   2 fois sa taille à la fin), `start` (secondes avant que le mouvement commence),
   `end` (le mouvement est fini `end` secondes avant la fin du segment), `crf`, `preset`,
