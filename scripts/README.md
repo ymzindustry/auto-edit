@@ -285,7 +285,7 @@ PLAN = [
 qui décrit l'effet + une fonction `command(...)` qui construit la commande) : il est
 aussitôt utilisable dans le plan, sans toucher au moteur.
 
-**Les quatre effets livrés :**
+**Les cinq effets livrés :**
 
 - **`side_by_side`** — les deux caméras **côte à côte**, toutes les deux entièrement
   visibles (aucun recadrage) : `base="main"`, `element="screen"`, `position="left"`
@@ -293,6 +293,14 @@ aussitôt utilisable dans le plan, sans toucher au moteur.
   de l'image), `gap_pct` (bande noire entre les deux, en % de la largeur), `pad`
   (couleur du fond). Le cadre s'élargit : une main 4K reste 2160 px de haut, l'écran
   portrait reste portrait.
+- **`corner_reveal`** — on **garde une fenêtre** de la caméra (`w` % de la largeur, `l` %
+  de la hauteur, centrée sur `x`,`y`) et on la fait **glisser vers un coin**
+  (`corner="bottom_left"`, `bottom_right`, `top_left`, `top_right`) à `g` % du bord,
+  pendant qu'un média (`src`) **apparaît en fond et prend toute la place** : à la fin le
+  média remplit l'image et la petite fenêtre reste visible dans son coin. `fade` (fondue
+  du média), `blur` (flou de la caméra derrière), `volume` (son du média), `fit`
+  (`cut`/`speed`), et `start`/`end` comme partout. Le mouvement est **continu sur toute
+  la plage**, il ne repart pas à chaque segment.
 - **`zoom`** — **travelling avant** sur la caméra : `zoom` (1.0 = rien, 2.0 = l'image fait
   2 fois sa taille à la fin), `start` (secondes avant que le mouvement commence),
   `end` (le mouvement est fini `end` secondes avant la fin du segment), `crf`, `preset`,

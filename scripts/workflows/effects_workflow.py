@@ -30,7 +30,7 @@ OPTIONS
   --dry-run             print the resolved plan and stop
 
 PLAN FORMAT
-  from effects import add_media, push_video, side_by_side, zoom
+  from effects import add_media, corner_reveal, push_video, side_by_side, zoom
   PLAN = [{"segments": [17, 18], "effect": add_media(src="../clips/bench.mp4", pct=70)}]
   "segments" = folder names, positions in order.txt, a range, or "all". An effect
   with all=True (zoom) needs no "segments" key at all.

@@ -119,6 +119,13 @@ def is_noise(text: str, min_chars: int) -> bool:
     return any(re.search(p, low) for p in HALLUCINATIONS)
 
 
+def probe_ok(path: str) -> bool:
+    """True when ffmpeg can open the file (a truncated copy has no moov atom)."""
+    res = subprocess.run([FFMPEG, "-v", "error", "-t", "0.1", "-i", path,
+                          "-f", "null", "-"], capture_output=True, text=True)
+    return res.returncode == 0 and "moov atom not found" not in res.stderr
+
+
 def find_main_video(folder: str, name: str):
     """The fallback video whose audio becomes the master (default main.mp4)."""
     want = os.path.splitext(name)[0].lower()
@@ -296,10 +303,20 @@ def main() -> None:
         print(f"\nDone -> {out or 'nothing to preview'}")
         return
 
+    print("preview   : built at the end -> fragmentation/preview_"
+          f"{args.preview_height}p.mp4 ({args.preview_fps:g} fps)"
+          + ("   [disabled with --no-preview]" if args.no_preview else ""))
     videos = sorted(glob.glob(os.path.join(folder, "*.mp4")))
     videos = [v for v in videos if not os.path.basename(v).startswith("preview_")]
     if not videos:
         raise SystemExit(f"No .mp4 in {folder} — nothing to cut.")
+    broken = [v for v in videos if not probe_ok(v)]
+    if broken:
+        raise SystemExit(
+            "unreadable video file(s) — the transfer is truncated or the file is corrupt:\n"
+            + "\n".join(f"  {b}" for b in broken)
+            + "\n  Re-transfer them (a copy whose moov atom is missing plays nowhere), "
+              "or move them out of the folder.")
 
     wavs = sorted(glob.glob(os.path.join(folder, "*.wav")))
     if args.wav:
