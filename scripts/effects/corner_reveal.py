@@ -39,8 +39,9 @@ CORNERS = ("bottom_left", "bottom_right", "top_left", "top_right")
 
 
 def corner_reveal(src, w=35, l=35, x=0.5, y=0.5, corner="bottom_left", g=3, z=100,
-                  start=1.0, end=1.0, fade=0.8, blur=20, volume=0.0, fit="cut",
-                  crf=18, preset="medium", fusion=False, only=None) -> dict:
+                  border=0, border_color="white", start=1.0, end=1.0, fade=0.8,
+                  blur=20, volume=0.0, fit="cut", crf=18, preset="medium",
+                  fusion=False, only=None) -> dict:
     """Describe the reveal. Every parameter belongs to THIS effect:
 
     src     : m1 — the image or video that ends up filling the frame (a path)
@@ -51,9 +52,13 @@ def corner_reveal(src, w=35, l=35, x=0.5, y=0.5, corner="bottom_left", g=3, z=10
     corner  : where the window ends up: bottom_left (default), bottom_right, top_left,
               top_right
     g       : gap between the window and the edges, in % of the frame width (3)
-    z       : size of the window, in % of the size it would have natively (100 = the
-              window shows m0 pixel for pixel, 50 = half size, 150 = 1.5x). The window
-              keeps the same content either way: it is only scaled.
+    z       : the size the window shrinks TO, in % of its base size (100 = it never
+              shrinks, 50 = half). It starts at its base size, shrinks during the first
+              `start` seconds and grows back to its base size on the last frame.
+    border  : thickness of the line around the window, in PIXELS at the base size
+              (0 = none). It is a padding of the window, so it travels AND shrinks with
+              it — at z=45 a 10 px line shows as ~4 px in the corner.
+    border_color : colour of that line ("white", "black", "0xRRGGBB", ...)
     start   : the window is settled IN THE CORNER at this many seconds (the way out lasts
               `start`); 0 = it starts there
     end     : the window leaves the corner this many seconds before the end and is back
@@ -83,9 +88,12 @@ def corner_reveal(src, w=35, l=35, x=0.5, y=0.5, corner="bottom_left", g=3, z=10
         raise ValueError("corner_reveal: g is a percentage, it cannot be negative")
     if z <= 0:
         raise ValueError("corner_reveal: z is a percentage of the window size, > 0")
+    if border < 0:
+        raise ValueError("corner_reveal: border is a pixel thickness, >= 0")
     return {"effect": NAME, "src": str(src), "w": float(w), "l": float(l),
             "x": float(x), "y": float(y), "corner": str(corner), "g": float(g),
-            "z": float(z), "start": float(start), "end": float(end), "fade": float(fade),
+            "z": float(z), "border": float(border), "border_color": str(border_color),
+            "start": float(start), "end": float(end), "fade": float(fade),
             "blur": float(blur), "volume": float(volume), "fit": str(fit),
             "crf": int(crf), "preset": str(preset), "fusion": bool(fusion),
             "only": only}
@@ -183,24 +191,24 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
     def even(v: float) -> int:
         return max(2, int(round(v / 2.0)) * 2)
 
-    # the region kept from m0 (native pixels), and the size it is DISPLAYED at: `z` %
-    # of that region — so z=100 shows it pixel for pixel, z=50 halves it
+    # the region kept from m0 (native pixels) and the size it shrinks TO: `z` % of that
+    # region. At the first frame the window is at its base size (z=100 equivalent), it
+    # shrinks during the first `start` seconds and grows back during the last `end`.
     raw_w, raw_h = even(W * desc["w"] / 100.0), even(H * desc["l"] / 100.0)
     if raw_w >= W or raw_h >= H:
         raise SystemExit("corner_reveal: w/l keep the whole frame — nothing to slide")
-    cw, ch = even(raw_w * desc["z"] / 100.0), even(raw_h * desc["z"] / 100.0)
-    x0 = min(max(0, desc["x"] * W - cw / 2), W - cw)
-    y0 = min(max(0, desc["y"] * H - ch / 2), H - ch)
+    zf = min(1.0, desc["z"] / 100.0)           # final size, as a fraction of the base
+    small_w, small_h = even(raw_w * zf), even(raw_h * zf)
 
-    # the region is centred on (x,y); the displayed window is centred on the same point
-    cx = min(max(0, desc["x"] * W - raw_w / 2), W - raw_w)
-    cy = min(max(0, desc["y"] * H - raw_h / 2), H - raw_h)
-
+    # centres: the base window sits on (x,y); the shrunk one sits in the corner
+    cx = min(max(desc["x"] * W, raw_w / 2), W - raw_w / 2)
+    cy = min(max(desc["y"] * H, raw_h / 2), H - raw_h / 2)
     gap = desc["g"] * W / 100.0
     c = desc["corner"]
-    x1 = gap if c.endswith("left") else W - cw - gap
-    y1 = gap if c.startswith("top") else H - ch - gap
-    if x1 < 0 or y1 < 0:
+    sx = gap + small_w / 2 if c.endswith("left") else W - gap - small_w / 2
+    sy = gap + small_h / 2 if c.startswith("top") else H - gap - small_h / 2
+    if not (small_w / 2 <= sx <= W - small_w / 2
+            and small_h / 2 <= sy <= H - small_h / 2):
         raise SystemExit("corner_reveal: the gap is larger than the free space")
 
     off = float(win["offset"])                 # may be negative: the move began earlier
@@ -209,6 +217,13 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
     en = max(0.0, float(win.get("end", desc["end"])))
     fade = float(win.get("fade", desc["fade"]))
     media_at = max(0.0, off)                   # m1 can only start inside this clip
+
+    # the border is a PADDING of the cropped window (drawn before the animated scale, so
+    # it shrinks with the window instead of leaving a stale rectangle behind)
+    bd = float(desc.get("border", 0) or 0)
+    border_pad = (f"pad=w={raw_w + 2 * int(bd)}:h={raw_h + 2 * int(bd)}"
+                  f":x={int(bd)}:y={int(bd)}:color={desc.get('border_color', 'white')},"
+                  if bd > 0 else "")
 
     # m1: scaled to COVER the frame (aspect kept, the overflow is cropped)
     media_natural = 0.0 if still else _duration(src)
@@ -258,14 +273,22 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
     else:
         back_e = "0"
     ease = f"({out_e})*(1-{back_e})"
-    wx = f"{x0:.2f}+({x1 - x0:.2f})*({ease})"
-    wy = f"{y0:.2f}+({y1 - y0:.2f})*({ease})"
+    # size follows the same curve: 1.0 (base) -> z/100 in the corner -> 1.0 at the end
+    scale_e = f"(1-{1.0 - zf:.6f}*({ease}))"
+    # x/y are the overlay's TOP-LEFT, so the shrinking size is taken into account: the
+    # window stays centred on a point that travels from (x,y) to the corner
+    wx = (f"{cx:.2f}+({sx - cx:.2f})*({ease})"
+          f"-({raw_w:.2f})*({scale_e})/2-({bd:.2f})*({scale_e})")
+    wy = (f"{cy:.2f}+({sy - cy:.2f})*({ease})"
+          f"-({raw_h:.2f})*({scale_e})/2-({bd:.2f})*({scale_e})")
 
     fc = (base
           + m1 + ";"
           + f"{bg_src}[m1]overlay=0:0:format=yuv420[bg];"
-          + f"[base]crop={raw_w}:{raw_h}:{cx:.0f}:{cy:.0f},"
-          + f"scale={cw}:{ch}:flags=lanczos[win];"
+          + f"[base]crop={raw_w}:{raw_h}:{cx - raw_w / 2:.0f}:{cy - raw_h / 2:.0f},"
+          + border_pad
+          + f"scale=w='trunc(iw*({scale_e})/2)*2':h='trunc(ih*({scale_e})/2)*2'"
+          + f":eval=frame:flags=lanczos[win];"
           + f"[bg][win]overlay=x='{wx}':y='{wy}':format=yuv420[out]")
 
     # audio: m1's own sound is optional and always mixed UNDER the voice
@@ -281,7 +304,7 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
         acodec = ["-c:a", "aac", "-b:a", "192k"]
 
     print(f"  {os.path.basename(mp4)} {W}x{H} @ {fps:g} fps  {dur:.2f}s — window "
-          f"{cw}x{ch} ({desc['w']:g}x{desc['l']:g}%, z={desc['z']:g}%) -> {c} at {st:.2f}s, "
+          f"{raw_w}x{raw_h} -> {small_w}x{small_h} ({desc['z']:g}%) in {c} at {st:.2f}s, "
           f"back home over the last {en:.2f}s")
 
     return [ff, "-y", "-i", mp4, *media_in,
