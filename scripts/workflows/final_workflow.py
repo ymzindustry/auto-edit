@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
@@ -99,6 +100,59 @@ def signature(path: str):
             g(r"Audio:\s*(\w+)", a), g(r"(\d{4,6})\s*Hz", a), g(r"Hz,\s*([\w.]+)", a))
 
 
+def video_signature(path: str) -> tuple:
+    """What must match for a COPY concat: the picture only (codec, size, fps, pix_fmt)."""
+    out = probe(path)
+    v = next((l for l in out.splitlines() if "Video:" in l), "")
+    m = re.search(r"Video:\s*(\w+)", v)
+    size = re.search(r"(\d{2,5}x\d{2,5})", v)
+    fps = re.search(r"([\d.]+)\s*fps", v)
+    pix = re.search(r"(yuv\w+)", v)
+    return (m.group(1) if m else "?", size.group(1) if size else "?",
+            fps.group(1) if fps else "?", pix.group(1) if pix else "?")
+
+
+def has_audio(path: str) -> bool:
+    return "Audio:" in probe(path)
+
+
+def normalise_audio(src: str, dst: str, dur: float) -> None:
+    """Give a segment ONE audio track (silence when it has none), copy the picture.
+
+    A segment whose audio is missing breaks both the concat filter and the copy concat,
+    and in this project many `main_*.mp4` have no audio at all — only the other camera
+    does. Rebuilding the sound costs a remux, not a 4K re-encode.
+    """
+    if has_audio(src):
+        cmd = [FFMPEG, "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0"]
+    else:
+        cmd = [FFMPEG, "-y", "-i", src, "-f", "lavfi",
+               "-t", f"{dur:.3f}", "-i",
+               "anullsrc=channel_layout=mono:sample_rate=48000",
+               "-map", "0:v:0", "-map", "1:a:0"]   # silence to fill the gap
+    run(cmd + ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ac", "1", "-ar", "48000",
+               "-video_track_timescale", TARGET_TIMESCALE,
+               "-movflags", "+faststart", dst])
+
+
+def reencode_segment(src: str, dst: str, size: str, fps: str, crf: int) -> None:
+    """Force a segment to the target picture spec (used only when the pictures differ)."""
+    w, h = size.split("x")
+    vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+          f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,fps={fps},format=yuv420p")
+    dur = duration(src)
+    if has_audio(src):
+        cmd = [FFMPEG, "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0", "-shortest"]
+    else:
+        cmd = [FFMPEG, "-y", "-i", src, "-f", "lavfi", "-t", f"{dur:.3f}", "-i",
+               "anullsrc=channel_layout=mono:sample_rate=48000",
+               "-map", "0:v:0", "-map", "1:a:0", "-shortest"]
+    run(cmd + ["-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
+               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ac", "1",
+               "-ar", "48000", "-video_track_timescale", TARGET_TIMESCALE,
+               "-movflags", "+faststart", dst])
+
+
 def concat(segments: list, out: str, crf: int) -> None:
     sigs = {signature(s) for s in segments}
     bases = {time_base(s) for s in segments}
@@ -114,7 +168,7 @@ def concat(segments: list, out: str, crf: int) -> None:
                  "-c", "copy", "-movflags", "+faststart", out])
         finally:
             os.remove(listfile)
-    elif len(sigs) == 1:
+    elif len(sigs) == 1 and all(has_audio(s) for s in segments):
         print(f"  segments share the codec but not the timescale {sorted(bases)}")
         print(f"  -> re-muxing each one to 1/{TARGET_TIMESCALE} (copy, no re-encode)")
         with tempfile.TemporaryDirectory(dir=PROFILE) as tmp:
@@ -129,18 +183,36 @@ def concat(segments: list, out: str, crf: int) -> None:
             run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
                  "-c", "copy", "-movflags", "+faststart", out])
     else:
-        print("  segments differ -> concat with a re-encode")
-        cmd = [FFMPEG, "-y"]
-        for s in segments:
-            cmd += ["-i", s]
-        n = len(segments)
-        chain = "".join(f"[{i}:v][{i}:a]" for i in range(n))
-        cmd += ["-filter_complex", f"{chain}concat=n={n}:v=1:a=1[v][a]",
-                "-map", "[v]", "-map", "[a]",
-                "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
-                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-                "-movflags", "+faststart", out]
-        run(cmd)
+        # Two possible mismatches, and they cost very different things:
+        #   same picture, different sound -> rebuild the audio only (video is copied);
+        #   different picture             -> re-encode each segment to the first one's spec.
+        # Either way it is ONE SEGMENT AT A TIME: decoding 37 4K files inside a single
+        # filter_complex needs tens of GB and gets killed.
+        sigs_v = [video_signature(s) for s in segments]
+        same_picture = len(set(sigs_v)) == 1
+        # the MAJORITY picture is the target: one odd segment must not force a 4K
+        # re-encode of the whole film, it gets re-encoded on its own
+        ref = Counter(sigs_v).most_common(1)[0][0]
+        with tempfile.TemporaryDirectory(dir=PROFILE) as tmp:
+            fixed, listfile = [], os.path.join(tmp, "list.txt")
+            for k, s in enumerate(segments):
+                d = os.path.join(tmp, f"n{k:03d}.mp4")
+                if sigs_v[k] == ref:
+                    if k == 0:
+                        print(f"  target picture {ref[1]} @ {ref[2]} fps -> sound "
+                              f"rebuilt, picture copied")
+                    normalise_audio(s, d, duration(s))
+                else:
+                    print(f"  {os.path.basename(os.path.dirname(s))}: picture "
+                          f"{sigs_v[k][1]} @ {sigs_v[k][2]} fps -> re-encoded to the "
+                          f"target")
+                    reencode_segment(s, d, ref[1], ref[2], crf)
+                fixed.append(d)
+            with open(listfile, "w", encoding="utf-8") as fh:
+                for s in fixed:
+                    fh.write("file '" + s + "'\n")
+            run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
+                 "-c", "copy", "-movflags", "+faststart", out])
 
 
 def music_gain_db(music_path: str, target_peak: float = -3.0) -> float:

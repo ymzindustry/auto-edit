@@ -252,24 +252,29 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
         print(f"  media    : {media_natural:.2f}s for a {dur:.2f}s slot -> looped "
               f"to {dur:.2f}s")
 
-    # background: the camera, optionally blurred (shrunk 4x first: a gblur on a 4K frame
-    # needs gigabytes, the same soft look costs ~16x less memory this way)
-    base = "[0:v]split[base][tb];"
+    # Background. Two layers: the blurred camera (it hides the part of m0 the window
+    # does not keep) and m1 on top of it. BOTH fade out over the last `end` seconds, so
+    # the plain camera comes back progressively instead of snapping: on the last frame
+    # the background IS m0 sharp, exactly under the window that has returned there.
+    base = "[0:v]split=3[sharp][tb][winsrc];"   # a frame can only be read once per link
+    blur_out = (f",fade=t=out:st={rng - en:.3f}:d={en:.3f}:alpha=1" if en > 0 else "")
     if desc["blur"] > 0:
         bw, bh = max(2, (W // 4) // 2 * 2), max(2, (H // 4) // 2 * 2)
         base += (f"[tb]scale={bw}:{bh},gblur=sigma={desc['blur'] / 4:g},"
-                 f"scale={W}:{H}[bgb];")
-        bg_src = "[bgb]"
+                 f"scale={W}:{H},format=rgba{blur_out}[bgb];")
     else:
-        base += "[tb]copy[bgb];"
-        bg_src = "[bgb]"
+        base += f"[tb]format=rgba{blur_out}[bgb];"
 
-    # m1 fades in on its own 0-based timeline, then is offset to the move's start
+    # m1 fades in on its own 0-based timeline, then is offset to the move's start; it
+    # fades out again while the window goes home
     m1 = f"[1:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},format=rgba"
     if fit_speed:
         m1 += f",setpts=PTS/{speed:.6f}"
     if fade > 0:
         m1 += f",fade=t=in:st=0:d={fade:.3f}:alpha=1"
+    if en > 0:
+        m1 += (f",fade=t=out:st={max(0.0, rng - en - media_at):.3f}"
+               f":d={en:.3f}:alpha=1")
     m1 += f",setpts=PTS+{media_at:.3f}/TB[m1]"
 
     # the moving window: the kept region of m0, sliding from (x0,y0) to (x1,y1)
@@ -298,8 +303,9 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
 
     fc = (base
           + m1 + ";"
-          + f"{bg_src}[m1]overlay=0:0:format=yuv420[bg];"
-          + f"[base]crop={raw_w}:{raw_h}:{cx - raw_w / 2:.0f}:{cy - raw_h / 2:.0f},"
+          + "[sharp][bgb]overlay=0:0:format=yuv420[bg0];"
+          + "[bg0][m1]overlay=0:0:format=yuv420[bg];"
+          + f"[winsrc]crop={raw_w}:{raw_h}:{cx - raw_w / 2:.0f}:{cy - raw_h / 2:.0f},"
           + border_pad
           + f"scale=w='trunc(iw*({scale_e})/2)*2':h='trunc(ih*({scale_e})/2)*2'"
           + f":eval=frame:flags=lanczos[win];"
