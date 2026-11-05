@@ -38,7 +38,7 @@ PATHS = ("src",)
 CORNERS = ("bottom_left", "bottom_right", "top_left", "top_right")
 
 
-def corner_reveal(src, w=35, l=35, x=0.5, y=0.5, corner="bottom_left", g=3,
+def corner_reveal(src, w=35, l=35, x=0.5, y=0.5, corner="bottom_left", g=3, z=100,
                   start=1.0, end=1.0, fade=0.8, blur=20, volume=0.0, fit="cut",
                   crf=18, preset="medium", fusion=False, only=None) -> dict:
     """Describe the reveal. Every parameter belongs to THIS effect:
@@ -51,6 +51,9 @@ def corner_reveal(src, w=35, l=35, x=0.5, y=0.5, corner="bottom_left", g=3,
     corner  : where the window ends up: bottom_left (default), bottom_right, top_left,
               top_right
     g       : gap between the window and the edges, in % of the frame width (3)
+    z       : size of the window, in % of the size it would have natively (100 = the
+              window shows m0 pixel for pixel, 50 = half size, 150 = 1.5x). The window
+              keeps the same content either way: it is only scaled.
     start   : the window is settled IN THE CORNER at this many seconds (the way out lasts
               `start`); 0 = it starts there
     end     : the window leaves the corner this many seconds before the end and is back
@@ -78,9 +81,11 @@ def corner_reveal(src, w=35, l=35, x=0.5, y=0.5, corner="bottom_left", g=3,
         raise ValueError("corner_reveal: x and y are fractions of the frame, 0..1")
     if g < 0:
         raise ValueError("corner_reveal: g is a percentage, it cannot be negative")
+    if z <= 0:
+        raise ValueError("corner_reveal: z is a percentage of the window size, > 0")
     return {"effect": NAME, "src": str(src), "w": float(w), "l": float(l),
             "x": float(x), "y": float(y), "corner": str(corner), "g": float(g),
-            "start": float(start), "end": float(end), "fade": float(fade),
+            "z": float(z), "start": float(start), "end": float(end), "fade": float(fade),
             "blur": float(blur), "volume": float(volume), "fit": str(fit),
             "crf": int(crf), "preset": str(preset), "fusion": bool(fusion),
             "only": only}
@@ -178,12 +183,18 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
     def even(v: float) -> int:
         return max(2, int(round(v / 2.0)) * 2)
 
-    # the window kept from m0, and where it starts (centred on x,y)
-    cw, ch = even(W * desc["w"] / 100.0), even(H * desc["l"] / 100.0)
-    if cw >= W or ch >= H:
+    # the region kept from m0 (native pixels), and the size it is DISPLAYED at: `z` %
+    # of that region — so z=100 shows it pixel for pixel, z=50 halves it
+    raw_w, raw_h = even(W * desc["w"] / 100.0), even(H * desc["l"] / 100.0)
+    if raw_w >= W or raw_h >= H:
         raise SystemExit("corner_reveal: w/l keep the whole frame — nothing to slide")
+    cw, ch = even(raw_w * desc["z"] / 100.0), even(raw_h * desc["z"] / 100.0)
     x0 = min(max(0, desc["x"] * W - cw / 2), W - cw)
     y0 = min(max(0, desc["y"] * H - ch / 2), H - ch)
+
+    # the region is centred on (x,y); the displayed window is centred on the same point
+    cx = min(max(0, desc["x"] * W - raw_w / 2), W - raw_w)
+    cy = min(max(0, desc["y"] * H - raw_h / 2), H - raw_h)
 
     gap = desc["g"] * W / 100.0
     c = desc["corner"]
@@ -253,7 +264,8 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
     fc = (base
           + m1 + ";"
           + f"{bg_src}[m1]overlay=0:0:format=yuv420[bg];"
-          + f"[base]crop={cw}:{ch}:{x0:.0f}:{y0:.0f}[win];"
+          + f"[base]crop={raw_w}:{raw_h}:{cx:.0f}:{cy:.0f},"
+          + f"scale={cw}:{ch}:flags=lanczos[win];"
           + f"[bg][win]overlay=x='{wx}':y='{wy}':format=yuv420[out]")
 
     # audio: m1's own sound is optional and always mixed UNDER the voice
@@ -269,7 +281,7 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
         acodec = ["-c:a", "aac", "-b:a", "192k"]
 
     print(f"  {os.path.basename(mp4)} {W}x{H} @ {fps:g} fps  {dur:.2f}s — window "
-          f"{cw}x{ch} ({desc['w']:g}x{desc['l']:g}%) -> {c} at {st:.2f}s, "
+          f"{cw}x{ch} ({desc['w']:g}x{desc['l']:g}%, z={desc['z']:g}%) -> {c} at {st:.2f}s, "
           f"back home over the last {en:.2f}s")
 
     return [ff, "-y", "-i", mp4, *media_in,

@@ -300,9 +300,11 @@ aussitôt utilisable dans le plan, sans toucher au moteur.
   la fenêtre **arrive dans le coin à `start` secondes** (le trajet dure `start`), elle y
   reste, puis **`end` secondes avant la fin elle repart** et retrouve sa place initiale
   sur la dernière image. `start=0` = déjà dans le coin, `end=0` = elle ne revient pas.
-  `fade` (fondue du média), `blur` (flou de la caméra derrière), `volume` (son du média),
-  `fit` (`cut`/`speed`). Le mouvement est **continu sur toute la plage**, il ne repart
-  pas à chaque segment.
+  `z` = taille de la fenêtre en % de sa taille naturelle (100 = pixel pour pixel, 50 =
+  moitié, 150 = 1,5×) : `w`/`l` choisissent la **zone** gardée, `z` la **taille** à
+  laquelle elle est affichée. `fade` (fondue du média), `blur` (flou de la caméra
+  derrière), `volume` (son du média), `fit` (`cut`/`speed`). Le mouvement est **continu
+  sur toute la plage**, il ne repart pas à chaque segment.
 - **`zoom`** — **travelling avant** sur la caméra : `zoom` (1.0 = rien, 2.0 = l'image fait
   2 fois sa taille à la fin), `start` (secondes avant que le mouvement commence),
   `end` (le mouvement est fini `end` secondes avant la fin du segment), `crf`, `preset`,
