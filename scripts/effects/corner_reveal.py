@@ -40,7 +40,7 @@ CORNERS = ("bottom_left", "bottom_right", "top_left", "top_right")
 
 def corner_reveal(src, w=35, l=35, x=0.5, y=0.5, corner="bottom_left", g=3, z=100,
                   border=0, border_color="white", start=1.0, end=1.0, fade=0.8,
-                  blur=20, volume=0.0, fit="cut", crf=18, preset="medium",
+                  blur=20, volume=0.0, fit="auto", crf=18, preset="medium",
                   fusion=False, only=None) -> dict:
     """Describe the reveal. Every parameter belongs to THIS effect:
 
@@ -68,9 +68,11 @@ def corner_reveal(src, w=35, l=35, x=0.5, y=0.5, corner="bottom_left", g=3, z=10
               while m1 is still transparent.
     volume  : level of m1's own sound, 0..1 (0 = silent, the clip's audio is kept). It is
               mixed UNDER the clip's voice and fades with the picture.
-    fit     : when m1 is LONGER than the window: "cut" plays it and stops at the end;
-              "speed" speeds it up (picture + its own sound) so the whole media fits.
-              A shorter media keeps looping.
+    fit     : how m1 is fitted to the slot (m0's length); it ALWAYS stops with m0.
+              "auto" (default) = longer than the slot -> sped up (picture + its own sound)
+              so the whole media plays; shorter -> looped to fill the slot.
+              "cut"  = play it and stop at the end of the slot (no speed-up);
+              "speed" = always speed a longer media up, never cut it.
     crf     : H.264 quality of the re-encoded segment (18 = visually lossless)
     preset  : x264 speed/size trade-off
     fusion  : True = the range is joined into ONE clip and the effect runs once
@@ -228,8 +230,9 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
     # m1: scaled to COVER the frame (aspect kept, the overflow is cropped)
     media_natural = 0.0 if still else _duration(src)
     speed = 1.0
-    fit_speed = (not still and desc["fit"] == "speed"
-                 and media_natural > dur + 0.05)
+    mode = str(desc.get("fit", "auto"))
+    longer = (not still and media_natural > dur + 0.05)
+    fit_speed = longer and mode in ("auto", "speed")
     if fit_speed:
         speed = media_natural / dur
         media_in = ["-t", f"{media_natural:.3f}", "-i", src]
@@ -237,6 +240,17 @@ def command(ctx: dict, desc: dict, mp4: str, dest_mp4: str):
         media_in = ["-loop", "1", "-t", f"{dur:.3f}", "-i", src]
     else:
         media_in = ["-stream_loop", "-1", "-t", f"{dur:.3f}", "-i", src]
+    if still:
+        print(f"  media    : image, held for {dur:.2f}s")
+    elif fit_speed:
+        print(f"  media    : {media_natural:.2f}s for a {dur:.2f}s slot -> sped up "
+              f"x{speed:.2f} (whole media kept, ends with m0)")
+    elif longer:
+        print(f"  media    : {media_natural:.2f}s for a {dur:.2f}s slot -> cut at "
+              f"{dur:.2f}s")
+    else:
+        print(f"  media    : {media_natural:.2f}s for a {dur:.2f}s slot -> looped "
+              f"to {dur:.2f}s")
 
     # background: the camera, optionally blurred (shrunk 4x first: a gblur on a 4K frame
     # needs gigabytes, the same soft look costs ~16x less memory this way)
