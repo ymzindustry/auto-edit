@@ -164,6 +164,11 @@ def main() -> None:
     ap.add_argument("--trim-offset", type=float, default=20.0,
                     help="A frame counts as speech when it is this many dB above the "
                          "noise floor (default 20)")
+    ap.add_argument("--tail-pad", type=float, default=0.6,
+                    help="Extra sound kept AFTER the last speech (default 0.6). The "
+                         "sustain test below can end the last word early — its vowel "
+                         "decays below the floor — and the end of the sentence then "
+                         "sounds cut; this keeps the natural decay")
     ap.add_argument("--trim-sustain", type=float, default=0.3,
                     help="...and stays there this long, in seconds (default 0.3)")
     # --no-enhance : do not run DeepFilterNet/EQ/loudnorm, just keep the speech-only
@@ -219,7 +224,10 @@ def main() -> None:
             if first is None:
                 print("trim edges  : no clear speech found, nothing trimmed")
             else:
-                head, tail = first - args.margin, last + args.margin
+                head = first - args.margin
+                # the TAIL gets a wider pad: a final vowel decays below the floor and
+                # `last` stops before the end of the word, which cut the last syllable
+                tail = min(duration, last + max(args.margin, args.tail_pad))
                 before = sum(min(b, head) - a for a, b in keeps if a < head)
                 after = sum(b - max(a, tail) for a, b in keeps if b > tail)
                 trimmed = [(max(a, head), min(b, tail))

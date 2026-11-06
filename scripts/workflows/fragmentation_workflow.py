@@ -30,6 +30,8 @@ OPTIONS
   --noise dB|auto       silence threshold (auto = noise floor + margin)
   --min-silence S       shortest pause treated as a silence (0.3)
   --margin S            speech kept before/after each cut (0.3)
+  --tail-pad S          extra sound kept after the LAST word (0.6): without it the
+                        final syllable can be clipped by the edge-trim test
   --min-speech S        bursts shorter than this are not segments (0.1)
   --no-pre-cut          enhance the whole recording, then cut (old order)
   --gap black|skip      a hole with no video becomes black frames, or is removed
@@ -220,6 +222,9 @@ def main() -> None:
     ap.add_argument("--min-silence", type=float, default=0.1,
                     help="Shortest pause (s) treated as a cut: 0.1 tight (default), "
                          "0.6-0.8 keeps more air")
+    ap.add_argument("--tail-pad", type=float, default=0.6,
+                    help="Extra seconds kept after the last word (default 0.6), so the "
+                         "end of the sentence is not clipped")
     ap.add_argument("--margin", type=float, default=0.3,
                     help="Seconds of speech kept before/after each cut, so the cuts are "
                          "not abrupt (default 0.3; 0.6 = more relaxed)")
@@ -403,7 +408,8 @@ def main() -> None:
             cmd = [VENV_AUDIO, os.path.join(SCRIPTS, "speech_master.py"), raw,
                    "-o", enhanced, "--map", audio_map, "--sr", str(args.sr),
                    "--noise", str(args.noise), "--min-silence", str(args.min_silence),
-                   "--margin", str(args.margin), "--min-speech", str(args.min_speech)]
+                   "--margin", str(args.margin), "--min-speech", str(args.min_speech),
+                   "--tail-pad", str(args.tail_pad)]
             cmd += (["--no-enhance"] if args.skip_enhance
                     else ["--lufs", str(args.lufs), "--chunk-sec", str(args.chunk_sec)])
             run(cmd)
@@ -417,7 +423,8 @@ def main() -> None:
         if args.no_pre_cut:
             cmd += ["--wav", enhanced, "--silence-wav", raw,
                     "--noise", str(args.noise), "--min-silence", str(args.min_silence),
-                    "--margin", str(args.margin), "--min-speech", str(args.min_speech)]
+                    "--margin", str(args.margin), "--min-speech", str(args.min_speech),
+                   "--tail-pad", str(args.tail_pad)]
         else:
             cmd += ["--audio-map", audio_map]
         cmd += ["--canvas", "1920x1080" if args.to_1080p else args.canvas]

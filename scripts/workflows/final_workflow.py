@@ -238,9 +238,13 @@ def add_music(video: str, music: str, out: str, volume: float, fade: float) -> N
     gain = norm + vol_gain
     print(f"  music level: {norm:+.1f} dB to normalise (peak -> -3 dBFS), "
           f"{vol_gain:+.1f} dB for volume {volume:g}  =>  {gain:+.1f} dB total")
+    # the very end of the voice gets a short fade too: a hard digital cut after the last
+    # word sounds like the sentence was truncated, even when the cut is on a silence
+    end_fade = 0.25
     graph = (f"[1:a]volume={gain:.2f}dB,afade=t=in:st=0:d={fade},"
              f"afade=t=out:st={fade_out:.3f}:d={fade}[m];"
-             f"[0:a][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[a]")
+             f"[0:a][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95,"
+             f"afade=t=out:st={max(0.0, dur - end_fade):.3f}:d={end_fade}[a]")
     run([FFMPEG, "-y", "-i", video, "-stream_loop", "-1", "-i", music,
          "-filter_complex", graph, "-map", "0:v", "-map", "[a]",
          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
